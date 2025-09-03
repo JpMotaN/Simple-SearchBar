@@ -22,4 +22,4 @@ With a single shortcut (default Ctrl/Cmd+K) or a draggable floating button, you 
 
 👉 In short: Simple Search Bar is the fastest way to find and use anything in your Foundry world or compendia.
 
-Support the project on Patreon
+Support the project on Patreon: https://www.patreon.com/cw/Jotape_Dev

@@ -1,0 +1,45 @@
+/* Single scroll container */
+.d5e-searchbar-app { overflow: hidden; }
+.d5e-sb-root { display: flex; flex-direction: column; height: 100%; }
+
+.d5e-sb-header { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--color-border-light-tertiary); }
+#d5e-sb-input { flex: 1; }
+.d5e-sb-inc { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+#d5e-sb-results { flex: 1; overflow: auto; padding: 6px 8px 10px; }
+.d5e-sb-hint, .d5e-sb-empty, .d5e-sb-error { opacity: .7; padding: 8px; }
+
+.d5e-sb-group { margin-top: 10px; }
+.d5e-sb-group-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .75; margin: 8px 4px; }
+
+.d5e-sb-item { display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.d5e-sb-item:hover { background: var(--color-bg-option); }
+.d5e-sb-item.is-selected { outline: 2px solid var(--color-border-highlight); }
+
+.d5e-sb-item .thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.d5e-sb-item .data { min-width: 0; }
+.d5e-sb-item .name { font-weight: 600; display: block; word-break: break-word; }
+.d5e-sb-item .meta { font-size: 11px; opacity: .7; }
+
+.d5e-sb-item .actions { display: flex; gap: 6px; }
+.d5e-sb-item .actions button { font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+
+/* Flash ao focar no item da ficha */
+.d5e-sb-flash { animation: d5e-sb-flash 0.7s ease; }
+@keyframes d5e-sb-flash {
+  0% { box-shadow: 0 0 0 0 var(--color-border-highlight); }
+  50% { box-shadow: 0 0 0 4px var(--color-border-highlight); }
+  100% { box-shadow: 0 0 0 0 var(--color-border-highlight); }
+}
+
+/* FAB (drag com rAF) */
+.d5e-sb-fab { position: fixed; top: 10px; left: 56px; z-index: 10000;
+  width: 28px; height: 28px; display: inline-grid; place-items: center;
+  border-radius: 999px; background: var(--color-border-highlight); color: #fff; border: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,.2); cursor: grab; }
+.d5e-sb-fab i { font-size: 14px; line-height: 1; }
+.d5e-top-left { top: 10px; left: 56px; }
+
+/* Evita seleção de texto durante drag (fica mais suave) */
+.d5e-sb-dragging, .d5e-sb-dragging * { user-select: none !important; cursor: grabbing !important; }

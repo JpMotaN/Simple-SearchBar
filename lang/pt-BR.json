@@ -1,0 +1,26 @@
+{
+  "D5ESB": {
+    "Title": "Buscar",
+    "Placeholder": "Busque itens, atores, diários, tabelas…",
+    "IncludeContent": "Buscar dentro do conteúdo (diários, descrições)",
+    "Open": "Abrir",
+    "Cast": "Lançar",
+    "Use": "Usar",
+    "Drop": "Arraste para a cena",
+    "TypeMore": "Digite pelo menos 2 letras…",
+    "NoResults": "Nenhum resultado",
+    "ErrSearch": "Search Bar: erro na busca (veja o console).",
+    "ErrOpen": "Search Bar: erro ao abrir o documento (veja o console).",
+    "Settings": {
+      "IncludeContentN": "Incluir conteúdo por padrão",
+      "IncludeContentH": "Quando ligado, indexa descrições e páginas de diários.",
+      "FabPosN": "Posição do botão flutuante",
+      "FabPosH": "A posição é lembrada por cliente (arraste o botão para mover)."
+    },
+    "Groups": {
+      "ActorSpells": "Magias nas fichas",
+      "Compendium": "Compêndio",
+      "World": "Conteúdo do mundo"
+    }
+  }
+}

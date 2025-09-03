@@ -3,14 +3,15 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*.*'   # ex.: v0.1.2
 
 permissions:
-  contents: write
+  contents: write  # para commit de volta e criação do release
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,29 +20,27 @@ jobs:
         id: vars
         run: |
           RAW_REF="${GITHUB_REF#refs/tags/}"
-          VERSION="${RAW_REF#v}"              # strip leading v
+          VERSION="${RAW_REF#v}"     # remove o "v" da tag
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$RAW_REF" >> $GITHUB_OUTPUT
 
       - name: Update module.json (version + download)
-        id: updjson
         run: |
           REPO="${{ github.repository }}"
           VERSION="${{ steps.vars.outputs.version }}"
           DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/simple-searchbar.zip"
 
-          # Atualiza version e download via jq
+          # Atualiza version e download com jq
           jq --arg v "$VERSION" --arg dl "$DOWNLOAD_URL" \
              '.version=$v | .download=$dl' module.json > module.tmp.json
           mv module.tmp.json module.json
 
-          echo "Updated module.json:"
+          echo "module.json updated:"
           cat module.json
 
-      - name: Zip module
+      - name: Build zip
         run: |
           mkdir -p dist
-          # Cria um zip com o conteúdo do módulo (ajuste a lista se tiver outros diretórios)
           zip -r dist/simple-searchbar.zip \
             module.json \
             lang \
@@ -52,14 +51,14 @@ jobs:
             --exclude 'dist/*' \
             --exclude '.github/*'
 
-      - name: Commit back updated module.json to main
+      - name: Commit updated module.json back to main
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add module.json
-          git commit -m "chore: bump module.json to v${VERSION}" || echo "No changes to commit"
-          git push || echo "No push (perhaps running on a fork or no permission)"
+          git commit -m "chore: bump module.json to v${VERSION}" || echo "No changes"
+          git push || echo "No push (fork/no perms)"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -69,10 +68,18 @@ jobs:
           body: |
             Release v${{ steps.vars.outputs.version }}
 
-            - Auto-generated zip for Foundry VTT install/update
+            - Auto-generated zip for Foundry VTT
             - module.json updated with version and download URL
           draft: false
           prerelease: false
           files: |
             dist/simple-searchbar.zip
             module.json
+
+      # --- Publica a versão no Foundry Package Repository (EXATAMENTE como no projeto anterior) ---
+      - name: Publish to Foundry Package Repository
+        uses: cs96and/FoundryVTT-release-package@v1
+        with:
+          package-token: ${{ secrets.PACKAGE_TOKEN }}
+          # o Foundry requer o manifest da VERSÃO específica (o module.json anexado ao release)
+          manifest-url: https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.tag }}/module.json

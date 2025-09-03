@@ -1,81 +1,138 @@
-// Simple Search Bar v0.1.0 (generic + configurable controls)
-// - Global search
-// - Drag actor tokens
-// - Keyboard nav
-// - Draggable FAB (smooth, optional)
-// - Resizable window with persisted size/pos
-// - Open actor sheet focusing the item
-// - NEW: Configurable hotkey via Foundry Keybindings API (+ option to show/hide FAB)
+// Simple Search Bar v0.3.7
+// - Keybinding aparece em Configure Controls (registra em init/setup/ready, com guarda).
+// - Fallback de atalho configurável (Module Settings) caso o Keybindings não funcione.
+// - Resto: busca global, drag de token, nav por teclado, FAB opcional, janela redimensionável,
+//          foco no item dentro da ficha, cache de index de compêndios.
 // © Jotape - MIT
 
 const MOD = "simple-searchbar";
+const LOG = (...a)=>console.log(`[${MOD}]`, ...a);
+const WARN = (...a)=>console.warn(`[${MOD}]`, ...a);
 
-// -------- Cache --------
-const __PACK_INDEX_CACHE = new Map(); // pack.collection -> index array
+// ---------- Cache ----------
+const __PACK_INDEX_CACHE = new Map();
 
-// -------- Settings & Keybindings --------
+// ---------- Settings ----------
 Hooks.once("init", () => {
-  // World setting: include content by default
   game.settings.register(MOD, "includeContentDefault", {
     name: game.i18n.localize("D5ESB.Settings.IncludeContentN") || "Include content by default",
     hint: game.i18n.localize("D5ESB.Settings.IncludeContentH") || "When enabled, indexes descriptions and journal pages.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true
+    scope: "world", config: true, type: Boolean, default: true
   });
 
-  // Client setting: FAB position
   game.settings.register(MOD, "fabPos", {
     name: game.i18n.localize("D5ESB.Settings.FabPosN") || "Floating button position",
     hint: game.i18n.localize("D5ESB.Settings.FabPosH") || "Position is remembered per client (drag the button to move).",
-    scope: "client",
-    config: false,
-    type: Object,
-    default: { top: 10, left: 56 }
+    scope: "client", config: false, type: Object, default: { top: 10, left: 56 }
   });
 
-  // Client setting: Show FAB (user can hide if prefer only the hotkey)
   game.settings.register(MOD, "showFab", {
     name: "Show floating button",
     hint: "If disabled, only the keyboard shortcut will open the search.",
-    scope: "client",
-    config: true,
-    type: Boolean,
-    default: true
+    scope: "client", config: true, type: Boolean, default: true
   });
 
-  // Persistência da janela (cliente)
   game.settings.register(MOD, "windowState", {
     name: "Window/Layout",
-    scope: "client",
-    config: false,
-    type: Object,
+    scope: "client", config: false, type: Object,
     default: { top: 80, left: 80, width: 420, height: 520 }
   });
 
-  // --- Keybindings (configuráveis no UI do Foundry) ---
-  // Users can change this in: Configure Controls → Keybindings
-  if (game.keybindings?.register) {
+  // Fallback (caso o Keybindings não apareça)
+  game.settings.register(MOD, "enableHotkeyFallback", {
+    name: "Enable Fallback Hotkey",
+    hint: "Uses a global listener with the hotkey below if the Keybindings list is unavailable.",
+    scope: "client", config: true, type: Boolean, default: true
+  });
+  game.settings.register(MOD, "customHotkey", {
+    name: "Fallback Hotkey",
+    hint: "Example: Ctrl+K, Cmd+K, Alt+Space, Shift+F.",
+    scope: "client", config: true, type: String, default: "Ctrl+K"
+  });
+
+  registerKeybindingSafe("init");
+});
+Hooks.once("setup", () => registerKeybindingSafe("setup"));
+Hooks.once("ready", () => {
+  registerKeybindingSafe("ready");
+  installFallbackHotkey();
+  installFab();
+});
+
+// ---------- Keybindings helpers ----------
+function registerKeybindingSafe(phase) {
+  try {
+    if (!game.keybindings?.register) {
+      WARN(`Keybindings API not available at ${phase}`);
+      return;
+    }
+    if (registerKeybindingSafe._done) return; // evita duplicar
     game.keybindings.register(MOD, "openSearch", {
       name: "Open Simple Search Bar",
       hint: "Open the search window and focus the input.",
       editable: [
-        { key: "KeyK", modifiers: ["CONTROL"] }, // Ctrl+K (Windows/Linux)
+        { key: "KeyK", modifiers: ["CONTROL"] }, // Ctrl+K
         { key: "KeyK", modifiers: ["META"] }     // Cmd+K (macOS)
       ],
-      // Optional: allow conflict so users can override if they want
-      // reserved: false,
-      // precedence: foundry.CONST.KEYBINDING_PRECEDENCE.NORMAL,
-      onDown: () => {
-        openSearch();
-        return true;
-      }
+      restricted: false,
+      reserved: false,
+      precedence: foundry?.CONST?.KEYBINDING_PRECEDENCE?.NORMAL ?? 0,
+      onDown: () => { openSearch(); return true; }
     });
+    registerKeybindingSafe._done = true;
+    LOG(`Keybinding "openSearch" registered at ${phase}`);
+  } catch (e) {
+    WARN(`Keybinding registration failed at ${phase}`, e);
   }
-});
+}
 
-// -------- UI: App --------
+// ---------- Fallback Hotkey ----------
+let _fallbackInstalled = false;
+function installFallbackHotkey() {
+  if (_fallbackInstalled) return;
+  if (!game.settings.get(MOD, "enableHotkeyFallback")) return;
+
+  const parseHotkey = (s) => {
+    const parts = String(s||"").split("+").map(p => p.trim().toLowerCase()).filter(Boolean);
+    const want = { ctrl:false, meta:false, alt:false, shift:false, key:null };
+    for (const p of parts) {
+      if (["ctrl","control","ctl"].includes(p)) want.ctrl = true;
+      else if (["cmd","meta","super"].includes(p)) want.meta = true;
+      else if (["alt","option"].includes(p)) want.alt = true;
+      else if (["shift"].includes(p)) want.shift = true;
+      else if (/^f\d{1,2}$/.test(p)) want.key = p.toUpperCase();
+      else if (p === "space" || p === "spacebar") want.key = " ";
+      else want.key = p.length === 1 ? p : p; // enter, escape etc.
+    }
+    return want;
+  };
+  const match = (ev, want) => {
+    if (want.ctrl  && !ev.ctrlKey)  return false;
+    if (want.meta  && !ev.metaKey)  return false;
+    if (want.alt   && !ev.altKey)   return false;
+    if (want.shift && !ev.shiftKey) return false;
+    const w = (want.key||"").toLowerCase();
+    if (!w) return false;
+    const k = (ev.key || "").toLowerCase();
+    if (/^f\d{1,2}$/.test(w)) return ev.key?.toUpperCase?.() === w.toUpperCase();
+    const map = { esc:"escape" };
+    const wk = map[w] ?? w;
+    return wk === (k === " " ? " " : k);
+  };
+
+  const handler = (ev) => {
+    const want = parseHotkey(game.settings.get(MOD, "customHotkey"));
+    if (match(ev, want)) {
+      ev.preventDefault();
+      openSearch();
+    }
+  };
+  document.addEventListener("keydown", handler);
+  _fallbackInstalled = true;
+  LOG(`Fallback hotkey installed (${game.settings.get(MOD, "customHotkey")})`);
+}
+
+// ---------- App ----------
 class SimpleSearchBar extends Application {
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
@@ -90,7 +147,6 @@ class SimpleSearchBar extends Application {
       classes: ["d5e-searchbar-app"]
     });
   }
-
   getData() {
     return {
       title: game.i18n.localize("D5ESB.Title"),
@@ -100,24 +156,19 @@ class SimpleSearchBar extends Application {
       hint: game.i18n.localize("D5ESB.TypeMore")
     };
   }
-
-  /** Restaura tamanho/posição salvos */
   async render(force=false, options={}) {
     const saved = game.settings.get(MOD, "windowState") || {};
     options = { ...options, left: saved.left ?? 80, top: saved.top ?? 80, width: saved.width ?? 420, height: saved.height ?? 520 };
     return super.render(force, options);
   }
-
   activateListeners(html) {
     super.activateListeners(html);
     const input   = html.find("#d5e-sb-input");
     const include = html.find("#d5e-sb-include");
     const results = html.find("#d5e-sb-results");
 
-    // --- Observers p/ salvar pos/size automaticamente ---
     this._installPersistObservers();
 
-    // keyboard nav
     let sel = -1;
     const list = () => Array.from(results[0].querySelectorAll(".d5e-sb-item"));
     const select = (idx) => {
@@ -137,29 +188,19 @@ class SimpleSearchBar extends Application {
       }
     });
 
-    // debounce
     let t = null;
-    input.on("input", () => {
-      clearTimeout(t);
-      t = setTimeout(()=> this.search(input.val().trim(), include.is(":checked")), 180);
-    });
+    input.on("input", () => { clearTimeout(t); t = setTimeout(()=> this.search(input.val().trim(), include.is(":checked")), 180); });
     include.on("change", () => this.search(input.val().trim(), include.is(":checked")));
   }
-
-  /** Observers para persistir posição e tamanho quando o usuário move/redimensiona a janela */
   _installPersistObservers() {
     const el = this.element?.[0];
     if (!el) return;
-
-    // Salvar pos quando style muda (top/left)
     const mo = new MutationObserver(() => {
       const { top, left, width, height } = this.position;
       game.settings.set(MOD, "windowState", { top, left, width, height });
     });
     mo.observe(el, { attributes: true, attributeFilter: ["style"] });
     this._posObserver = mo;
-
-    // Salvar size quando redimensionada
     const ro = new ResizeObserver(() => {
       const { top, left, width, height } = this.position;
       game.settings.set(MOD, "windowState", { top, left, width, height });
@@ -167,14 +208,10 @@ class SimpleSearchBar extends Application {
     ro.observe(el);
     this._sizeObserver = ro;
   }
-
   async close(options) {
-    // salva estado ao fechar
-    try {
-      const { top, left, width, height } = this.position;
+    try { const { top, left, width, height } = this.position;
       await game.settings.set(MOD, "windowState", { top, left, width, height });
     } catch(e){}
-    // limpa observers
     this._posObserver?.disconnect(); this._sizeObserver?.disconnect();
     return super.close(options);
   }
@@ -190,51 +227,40 @@ class SimpleSearchBar extends Application {
     }
 
     const groups = { actorSpells: [], world: [], compendia: [] };
-
     const fields = ["name", "type"];
     if (includeContent) fields.push("text", "system.description", "system.details", "img");
 
     try {
-      // 1) Actor items (por padrão, procura spells; pode trocar para genérico)
       const ql = q.toLowerCase();
+      // 1) itens nas fichas (default: spells; troque se quiser genérico)
       for (const actor of game.actors) {
         for (const item of actor.items) {
-          // Totalmente genérico? troque para: if (!String(item.name).toLowerCase().includes(ql)) continue;
           if (item.type !== "spell") continue;
           const desc = getProperty(item, "system.description.value") || getProperty(item, "system.description") || "";
           const hay = `${item.name} ${desc}`.toLowerCase();
           if (hay.includes(ql)) {
-            const actorType = actor.type || "Actor";
             groups.actorSpells.push({
-              kind: "actorItem",
-              actorId: actor.id,
-              actorType,
-              itemId: item.id,
-              name: item.name,
-              actorName: actor.name,
-              img: item.img,
-              type: item.type
+              kind: "actorItem", actorId: actor.id, actorType: actor.type || "Actor",
+              itemId: item.id, name: item.name, actorName: actor.name, img: item.img, type: item.type
             });
           }
         }
       }
 
-      // 2) World content (Actors/Items/Journals/Tables)
+      // 2) mundo
       const pushWorld = (doc, src) => {
         groups.world.push({ kind: "worldDoc", uuid: doc.uuid, name: doc.name, type: doc.documentName?.toLowerCase?.() || src, img: doc.img || doc.texture?.src || "" });
       };
       const like = (s)=> (s||"").toLowerCase().includes(ql);
-
       for (const a of game.actors)  if (like(a.name)) pushWorld(a,"Actor");
       for (const i of game.items)   if (like(i.name)) pushWorld(i,"Item");
       for (const j of game.journal) if (like(j.name)) pushWorld(j,"JournalEntry");
       for (const t of game.tables)  if (like(t.name)) pushWorld(t,"RollTable");
 
-      // 3) Compendia
+      // 3) compêndios
       for (const pack of game.packs) {
         const t = pack.documentName;
         if (!["Actor","Item","JournalEntry","RollTable"].includes(t)) continue;
-
         let index = __PACK_INDEX_CACHE.get(pack.collection);
         if (!index) {
           index = await pack.getIndex({ fields });
@@ -247,7 +273,7 @@ class SimpleSearchBar extends Application {
         }
       }
 
-      // Render results
+      // render
       const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
       const mkItem = (o, meta, actions=[]) => {
         const el = document.createElement("div");
@@ -259,7 +285,7 @@ class SimpleSearchBar extends Application {
             <span class="name">${label}</span>
             <span class="meta">${meta}</span>
           </div>
-            <div class="actions">${actions.map(a=>`<button data-act="${a.act}">${a.label}</button>`).join("")}</div>
+          <div class="actions">${actions.map(a=>`<button data-act="${a.act}">${a.label}</button>`).join("")}</div>
         `;
         return el;
       };
@@ -274,24 +300,17 @@ class SimpleSearchBar extends Application {
         for (const it of arr) frag.append(builder(it));
       };
 
-      // Actor items (meta + Cast só se suportado)
       addGroup("D5ESB.Groups.ActorSpells", groups.actorSpells, (r) => {
         const actor = game.actors.get(r.actorId);
         const item  = actor?.items?.get(r.itemId);
         const canUse = !!(item && (typeof item.use === "function" || typeof item.roll === "function"));
-
-        const actorTypeLabel = (r.actorType||"Actor").toString();
-        const meta = `${r.type} • ${r.actorName} (${actorTypeLabel})`;
+        const meta = `${r.type} • ${r.actorName} (${r.actorType||"Actor"})`;
         const actions = [
           ...(canUse ? [{ act: "cast", label: i18n.localize("D5ESB.Cast") || "Cast" }] : []),
           { act: "open", label: i18n.localize("D5ESB.Open") || "Open" }
         ];
-
         const el = mkItem(r, meta, actions);
-        el.addEventListener("click", (ev)=> {
-          if (ev.target instanceof HTMLButtonElement) return; // handled by buttons
-          this.openActorItem(r, { focus: true });
-        });
+        el.addEventListener("click", (ev)=> { if (ev.target instanceof HTMLButtonElement) return; this.openActorItem(r, { focus: true }); });
         el.querySelectorAll("button").forEach(b => b.addEventListener("click", (ev)=>{
           ev.stopPropagation();
           const act = b.dataset.act;
@@ -301,14 +320,10 @@ class SimpleSearchBar extends Application {
         return el;
       });
 
-      // World docs
       addGroup("D5ESB.Groups.World", groups.world, (r) => {
-        const meta = r.type;
-        const actions = [{act:"open", label:i18n.localize("D5ESB.Open") || "Open"}];
-        const el = mkItem(r, meta, actions);
+        const el = mkItem(r, r.type, [{act:"open", label:i18n.localize("D5ESB.Open") || "Open"}]);
         el.addEventListener("click", ()=> this.openByUUID(r.uuid, q));
         el.querySelector("button").addEventListener("click", (ev)=>{ ev.stopPropagation(); this.openByUUID(r.uuid, q); });
-        // Drag Actor tokens
         el.draggable = (r.type==="actor");
         if (el.draggable) {
           el.addEventListener("dragstart", ev => {
@@ -319,31 +334,23 @@ class SimpleSearchBar extends Application {
         return el;
       });
 
-      // Compendia
       addGroup("D5ESB.Groups.Compendium", groups.compendia, (r) => {
-        const meta = `${r.type} • ${r.pack}`;
-        const actions = [{act:"open", label:i18n.localize("D5ESB.Open") || "Open"}];
-        const el = mkItem(r, meta, actions);
+        const el = mkItem(r, `${r.type} • ${r.pack}`, [{act:"open", label:i18n.localize("D5ESB.Open") || "Open"}]);
         el.addEventListener("click", ()=> this.openFromPack(r, q));
         el.querySelector("button").addEventListener("click", (ev)=>{ ev.stopPropagation(); this.openFromPack(r, q); });
         el.draggable = (r.type==="actor");
         if (el.draggable) {
           el.addEventListener("dragstart", async ev => {
-            ev.dataTransfer.setData("text/plain", JSON.stringify({
-              type: "Actor",
-              uuid: `Compendium.${r.pack}.${r._id}`
-            }));
+            ev.dataTransfer.setData("text/plain", JSON.stringify({ type: "Actor", uuid: `Compendium.${r.pack}.${r._id}` }));
           });
           el.title = i18n.localize("D5ESB.Drop") || "Drag to scene";
         }
         return el;
       });
 
-      if (!frag.childNodes.length) {
-        results.append(`<div class="d5e-sb-empty">${i18n.localize("D5ESB.NoResults")}</div>`);
-      } else {
-        results[0].appendChild(frag);
-      }
+      if (!frag.childNodes.length) results.append(`<div class="d5e-sb-empty">${i18n.localize("D5ESB.NoResults")}</div>`);
+      else results[0].appendChild(frag);
+
     } catch (err) {
       console.error(err);
       results.append(`<div class="d5e-sb-error">${i18n.localize("D5ESB.ErrSearch")}</div>`);
@@ -354,21 +361,13 @@ class SimpleSearchBar extends Application {
     const actor = game.actors.get(r.actorId);
     const item = actor?.items?.get(r.itemId);
     if (!item) return;
-
-    // Mostrar a FICHA do ator e tentar focar no item correspondente.
     await actor?.sheet?.render(true);
-
     if (!focus) return item?.sheet?.render(true);
-
     try {
       const el = actor.sheet?.element?.[0];
       if (!el) return item?.sheet?.render(true);
-
-      // Tenta achar o elemento do item por data-item-id
       const findItemNode = () => el.querySelector(`[data-item-id="${item.id}"]`);
       let node = findItemNode();
-
-      // Se não estiver visível, tente ativar algumas abas comuns e procurar de novo
       if (!node) {
         const tryTabs = ["spellbook", "features", "inventory", "actions"];
         for (const tab of tryTabs) {
@@ -379,37 +378,25 @@ class SimpleSearchBar extends Application {
           if (node) break;
         }
       }
-
-      // Se achar, rola até o item e faz um flash rápido
       if (node) {
         node.scrollIntoView({ block: "center" });
         node.classList.add("d5e-sb-flash");
         setTimeout(()=> node.classList.remove("d5e-sb-flash"), 700);
         return;
       }
-
-      // Fallback: abre a planilha do Item
       return item?.sheet?.render(true);
-    } catch (e) {
-      console.error(e);
-      return item?.sheet?.render(true);
-    }
+    } catch (e) { console.error(e); return item?.sheet?.render(true); }
   }
-
   async castActorItem(r) {
     const actor = game.actors.get(r.actorId);
     const item = actor?.items?.get(r.itemId);
     if (!item) return;
     try {
-      if (typeof item.use === "function") return item.use(); // (ex.: dnd5e v3)
-      if (typeof item.roll === "function") return item.roll(); // fallback genérico
+      if (typeof item.use === "function") return item.use();
+      if (typeof item.roll === "function") return item.roll();
       ui.notifications?.warn("Item can't be used directly.");
-    } catch (e) {
-      console.error(e);
-      ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen"));
-    }
+    } catch (e) { console.error(e); ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen")); }
   }
-
   async openByUUID(uuid, q) {
     try {
       const doc = await fromUuid(uuid);
@@ -420,12 +407,8 @@ class SimpleSearchBar extends Application {
         return doc.sheet?.render(true, { pageId: page?.id });
       }
       return doc?.sheet?.render(true);
-    } catch (e) {
-      console.error(e);
-      ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen"));
-    }
+    } catch (e) { console.error(e); ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen")); }
   }
-
   async openFromPack(r, q) {
     try {
       const doc = await game.packs.get(r.pack)?.getDocument(r._id);
@@ -436,76 +419,41 @@ class SimpleSearchBar extends Application {
         return doc.sheet?.render(true, { pageId: page?.id });
       }
       return doc?.sheet?.render(true);
-    } catch (e) {
-      console.error(e);
-      ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen"));
-    }
+    } catch (e) { console.error(e); ui.notifications?.error(game.i18n.localize("D5ESB.ErrOpen")); }
   }
 }
 
-// -------- Helpers --------
+// ---------- Helpers ----------
 function openSearch() {
   const app = new SimpleSearchBar();
   app.render(true);
   setTimeout(()=> document.querySelector("#d5e-sb-input")?.focus(), 50);
 }
 
-// -------- FAB (drag suave com rAF; pode ser oculto por config) --------
-Hooks.once("ready", () => {
-  if (!game.settings.get(MOD, "showFab")) return; // user disabled
-
+// ---------- FAB ----------
+function installFab() {
+  if (!game.settings.get(MOD, "showFab")) return;
   const btn = document.createElement("button");
   btn.className = "d5e-sb-fab d5e-top-left";
   btn.innerHTML = `<i class="fas fa-search"></i>`;
   document.body.append(btn);
 
-  // Restore position
   const pos = game.settings.get(MOD, "fabPos") || {top:10,left:56};
-  btn.style.top = pos.top + "px";
-  btn.style.left = pos.left + "px";
+  btn.style.top = pos.top + "px"; btn.style.left = pos.left + "px";
 
-  // Draggable com rAF
   let drag = { active:false, x:0, y:0, offX:0, offY:0, id:null };
   let pending = null, rafId = null;
+  const applyPos = () => { if (!pending) return; btn.style.left = `${Math.max(8, pending.x)}px`; btn.style.top = `${Math.max(8, pending.y)}px`; pending = null; rafId = null; };
+  const onMove = (clientX, clientY) => { const nx = drag.offX + (clientX - drag.x); const ny = drag.offY + (clientY - drag.y);
+    pending = { x:nx, y:ny }; if (!rafId) rafId = requestAnimationFrame(applyPos); };
 
-  const applyPos = () => {
-    if (!pending) return;
-    btn.style.left = `${Math.max(8, pending.x)}px`;
-    btn.style.top  = `${Math.max(8, pending.y)}px`;
-    pending = null; rafId = null;
-  };
-
-  const onMove = (clientX, clientY) => {
-    const nx = drag.offX + (clientX - drag.x);
-    const ny = drag.offY + (clientY - drag.y);
-    pending = { x:nx, y:ny };
-    if (!rafId) rafId = requestAnimationFrame(applyPos);
-  };
-
-  btn.addEventListener("pointerdown", (e)=>{
-    if (e.button!==0) return;
-    drag.active = true;
-    drag.x = e.clientX; drag.y = e.clientY;
-    drag.offX = parseInt(btn.style.left||"56",10);
-    drag.offY = parseInt(btn.style.top||"10",10);
-    drag.id = e.pointerId;
-    btn.setPointerCapture(drag.id);
-    document.body.classList.add("d5e-sb-dragging");
-  });
-
-  btn.addEventListener("pointermove", (e)=>{
-    if (!drag.active) return;
-    onMove(e.clientX, e.clientY);
-  });
-
-  btn.addEventListener("pointerup", async ()=>{
-    if (!drag.active) return;
-    drag.active=false;
-    cancelAnimationFrame(rafId); applyPos();
+  btn.addEventListener("pointerdown", (e)=>{ if (e.button!==0) return;
+    drag.active = true; drag.x = e.clientX; drag.y = e.clientY;
+    drag.offX = parseInt(btn.style.left||"56",10); drag.offY = parseInt(btn.style.top||"10",10);
+    drag.id = e.pointerId; btn.setPointerCapture(drag.id); document.body.classList.add("d5e-sb-dragging"); });
+  btn.addEventListener("pointermove", (e)=>{ if (!drag.active) return; onMove(e.clientX, e.clientY); });
+  btn.addEventListener("pointerup", async ()=>{ if (!drag.active) return; drag.active=false; cancelAnimationFrame(rafId); applyPos();
     document.body.classList.remove("d5e-sb-dragging");
-    await game.settings.set(MOD, "fabPos", { top: parseInt(btn.style.top,10), left: parseInt(btn.style.left,10) });
-  });
-
-  // Click: open app
+    await game.settings.set(MOD, "fabPos", { top: parseInt(btn.style.top,10), left: parseInt(btn.style.left,10) }); });
   btn.addEventListener("click", () => openSearch());
-});
+}

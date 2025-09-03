@@ -1,6 +1,6 @@
 {
   "id": "simple-searchbar",
-  "title": "Simple Search Bar",
+  "title": "Simple SearchBar",
   "description": "Busca global rápida: atores, itens, compêndios, diários e tabelas. Inclui botão flutuante, atalho Ctrl/Cmd+K, janela redimensionável, arrastar tokens e navegação por teclado.",
   "version": "0.1.0",
   "authors": [{ "name": "Jotape" }],

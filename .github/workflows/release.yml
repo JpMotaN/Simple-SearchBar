@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: vars
+        run: |
+          RAW_REF="${GITHUB_REF#refs/tags/}"
+          VERSION="${RAW_REF#v}"              # strip leading v
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$RAW_REF" >> $GITHUB_OUTPUT
+
+      - name: Update module.json (version + download)
+        id: updjson
+        run: |
+          REPO="${{ github.repository }}"
+          VERSION="${{ steps.vars.outputs.version }}"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/simple-searchbar.zip"
+
+          # Atualiza version e download via jq
+          jq --arg v "$VERSION" --arg dl "$DOWNLOAD_URL" \
+             '.version=$v | .download=$dl' module.json > module.tmp.json
+          mv module.tmp.json module.json
+
+          echo "Updated module.json:"
+          cat module.json
+
+      - name: Zip module
+        run: |
+          mkdir -p dist
+          # Cria um zip com o conteúdo do módulo (ajuste a lista se tiver outros diretórios)
+          zip -r dist/simple-searchbar.zip \
+            module.json \
+            lang \
+            scripts \
+            styles \
+            templates \
+            --exclude '*.git*' \
+            --exclude 'dist/*' \
+            --exclude '.github/*'
+
+      - name: Commit back updated module.json to main
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.json
+          git commit -m "chore: bump module.json to v${VERSION}" || echo "No changes to commit"
+          git push || echo "No push (perhaps running on a fork or no permission)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: Simple SearchBar v${{ steps.vars.outputs.version }}
+          body: |
+            Release v${{ steps.vars.outputs.version }}
+
+            - Auto-generated zip for Foundry VTT install/update
+            - module.json updated with version and download URL
+          draft: false
+          prerelease: false
+          files: |
+            dist/simple-searchbar.zip
+            module.json
